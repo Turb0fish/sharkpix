@@ -11,7 +11,7 @@
 
 > This is the default English README. For Russian version, see [README.ru.md](README.ru.md)
 
-A truly *shark* image viewer that aims to be lightweight, without using QT, GTK, etc.
+A truly *shark* OpenGL image viewer that aims to be lightweight, without using QT, GTK, etc.
 
 Images are textured and displayed with the ability to zoom, move, and view in full screen. Does not depend on external GUI libraries, uses its own interface built on mouse and keyboard events.
 
@@ -43,7 +43,7 @@ BMP | ✅
 TGA | ✅
 GIF PNG | ⚠️
 QOI | ❌
-FLIP | ❌
+FLIF | ❌
 
 # ⚙️ Build
 
