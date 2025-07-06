@@ -1,4 +1,7 @@
 #define _GNU_SOURCE
+#define MAX_PATH_DISPLAY 512
+#define STR(x) #x
+#define XSTR(x) STR(x)
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -136,18 +139,23 @@ void updateWindowTitle(void) {
 	//need rewrite
 	switch(img->state) {
 		case IMAGE_STATE_LOADED:
-			snprintf(title, sizeof(title), "[%d/%zu] %s | %dx%d | %.2f MB",
-			g_appState.currentIndex + 1, g_appState.images.size,
-			img->path_utf8, img->full_width, img->full_height,
-			ImageMetadata_getFileSizeMB(img));
+			snprintf(title, sizeof(title),
+				"[%d/%zu] %." XSTR(MAX_PATH_DISPLAY) "s | %dx%d | %.2f MB",
+				g_appState.currentIndex + 1, g_appState.images.size,
+				img->path_utf8, img->full_width, img->full_height,
+				ImageMetadata_getFileSizeMB(img));
 			break;
 		case IMAGE_STATE_LOADING:
-			snprintf(title, sizeof(title), "[%d/%zu] %s | Loading...",
-			g_appState.currentIndex + 1, g_appState.images.size, img->path_utf8);
+			snprintf(title, sizeof(title),
+				"[%d/%zu] %." XSTR(MAX_PATH_DISPLAY) "s | Loading...",
+				g_appState.currentIndex + 1, g_appState.images.size,
+				img->path_utf8);
 			break;
 		default:
-			snprintf(title, sizeof(title), "[%d/%zu] %s | Failed or Unloaded",
-			g_appState.currentIndex + 1, g_appState.images.size, img->path_utf8);
+			snprintf(title, sizeof(title),
+				"[%d/%zu] %." XSTR(MAX_PATH_DISPLAY) "s | Failed or Unloaded",
+				g_appState.currentIndex + 1, g_appState.images.size,
+				img->path_utf8);
 	}
 	SDL_SetWindowTitle(g_appState.window, title);
 }
@@ -410,7 +418,6 @@ const char* fragmentShaderSource =
 int main(int argc, char* argv[]) {
 	(void)argc; (void)argv;
 	init_app_state();
-	if (SDL_Init(SDL_INIT_VIDEO) < 0) return -1;
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
