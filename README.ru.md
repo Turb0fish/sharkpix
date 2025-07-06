@@ -41,7 +41,7 @@ TIFF TIF| ✅
 JPEG XL | ✅
 BMP | ✅
 TGA | ✅
-GIF PNG | ⚠️
+GIF APNG | ⚠️
 QOI | ❌
 FLIF | ❌
 
