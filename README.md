@@ -15,14 +15,14 @@ A truly *shark* image viewer that aims to be lightweight, without using QT, GTK,
 
 Images are textured and displayed with the ability to zoom, move, and view in full screen. Does not depend on external GUI libraries, uses its own interface built on mouse and keyboard events.
 
-### ⌨️ Controls:
+### ⌨️ Controls
 * Arrows, Keypad and 🖱️ - Go to the next or previous image
 * Esc - Exit
 * F - Full Screen
 * Ctrl + 🖱️ - Zoom
 * R - Reset Zoom and Center to window size
 
-### Usage:
+### Usage
 Run in any directory with images
 
 # 🖼️ Supported formats
