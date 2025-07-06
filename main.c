@@ -131,12 +131,11 @@ void unloadAllTexturesExcept(int exceptionIndex) {
 
 void updateWindowTitle(void) {
 	if (g_appState.currentIndex < 0) {
-		SDL_SetWindowTitle(g_appState.window, "Image Viewer");
+		SDL_SetWindowTitle(g_appState.window, "SharkPix");
 		return;
 	}
 	ImageMetadata* img = &g_appState.images.items[g_appState.currentIndex];
 	char title[1024];
-	//need rewrite
 	switch(img->state) {
 		case IMAGE_STATE_LOADED:
 			snprintf(title, sizeof(title),
@@ -188,47 +187,67 @@ void loader_request_load(int index) {
 	SDL_UnlockMutex(g_appState.loader_mutex);
 }
 
-//rewrite this after
+typedef unsigned char* (*ImageLoader)(const char*, int*, int*);
+
+static unsigned char* stbi_load_simple(const char* path, int* width, int* height) {
+	int channels;
+	return stbi_load(path, width, height, &channels, 4); //all return 4 channels
+}
+
 int loader_thread_func(void* data) {
 	(void)data;
 	while (atomic_load(&g_appState.loader_running)) {
 		SDL_LockMutex(g_appState.loader_mutex);
-		while (atomic_load(&g_appState.loader_nextImageToLoad) == -1 && atomic_load(&g_appState.loader_running)) {
+		while (atomic_load(&g_appState.loader_nextImageToLoad) == -1 && 
+               atomic_load(&g_appState.loader_running)) {
 			SDL_WaitCondition(g_appState.loader_cv, g_appState.loader_mutex);
 		}
 		if (!atomic_load(&g_appState.loader_running)) {
 			SDL_UnlockMutex(g_appState.loader_mutex);
-		break;
+			break;
 		}
 		int indexToLoad = atomic_exchange(&g_appState.loader_nextImageToLoad, -1);
 		SDL_UnlockMutex(g_appState.loader_mutex);
 		if (indexToLoad == -1) continue;
 		ImageMetadata* meta = &g_appState.images.items[indexToLoad];
 		struct stat fileStat;
-	if (stat(meta->path_utf8, &fileStat) == 0)
+		if (stat(meta->path_utf8, &fileStat) == 0) {
 			ImageMetadata_setFileSize(meta, fileStat.st_size);
-		int width = 0, height = 0;
-		unsigned char* img_data = NULL;
+		}
 		const char* ext = strrchr(meta->path_utf8, '.');
+		ImageLoader loader = stbi_load_simple;
 		if (ext) {
-			if (strcasecmp(ext, ".png") == 0)
-				img_data = loadImage_SPNG(meta->path_utf8, &width, &height);
-			else if (strcasecmp(ext, ".jpg") == 0 || strcasecmp(ext, ".jpeg") == 0)
-				img_data = loadImage_JpegTurbo(meta->path_utf8, &width, &height);
-			else if (strcasecmp(ext, ".webp") == 0)
-				img_data = loadImage_WebP(meta->path_utf8, &width, &height);
-			else if (strcasecmp(ext, ".heif") == 0 || strcasecmp(ext, ".heic") == 0 || strcasecmp(ext, ".avif") == 0)
-				img_data = loadImage_HeifAvif(meta->path_utf8, &width, &height);
-			else if (strcasecmp(ext, ".tiff") == 0 || strcasecmp(ext, ".tif") == 0)
-				img_data = loadImage_Tiff(meta->path_utf8, &width, &height);
-			else if (strcasecmp(ext, ".jxl") == 0)
-				img_data = loadImage_Jxl(meta->path_utf8, &width, &height);
+			static const struct {
+				const char* ext;
+				ImageLoader loader;
+			} loaders[] = {
+				{".png",  loadImage_SPNG},
+				{".jpg",  loadImage_JpegTurbo},
+				{".jpeg", loadImage_JpegTurbo},
+				{".webp", loadImage_WebP},
+				{".heif", loadImage_HeifAvif},
+				{".heic", loadImage_HeifAvif},
+				{".avif", loadImage_HeifAvif},
+				{".tiff", loadImage_Tiff},
+				{".tif",  loadImage_Tiff},
+				{".jxl",  loadImage_Jxl}
+			};
+			for (size_t i = 0; i < sizeof(loaders)/sizeof(loaders[0]); ++i) {
+				if (strcasecmp(ext, loaders[i].ext) == 0) {
+					loader = loaders[i].loader;
+					break;
+				}
+			}
 		}
-		if (!img_data) {
-			int channels;
-			img_data = stbi_load(meta->path_utf8, &width, &height, &channels, 4);
-		}
-		LoadResult result = {indexToLoad, img_data, width, height, (img_data != NULL)};
+		int width = 0, height = 0;
+		unsigned char* img_data = loader(meta->path_utf8, &width, &height);
+		LoadResult result = {
+			.index = indexToLoad,
+			.data = img_data,
+			.width = width,
+			.height = height,
+			.success = (img_data != NULL)
+		};
 		LoadResultQueue_enqueue(&g_appState.loader_results, result);
 	}
 	return 0;
@@ -421,7 +440,7 @@ int main(int argc, char* argv[]) {
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-	g_appState.window = SDL_CreateWindow("Viewer", g_appState.windowWidth, g_appState.windowHeight, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
+	g_appState.window = SDL_CreateWindow("SharkPix", g_appState.windowWidth, g_appState.windowHeight, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
 	if (!g_appState.window) return -1;
 	g_appState.glContext = SDL_GL_CreateContext(g_appState.window);
 	if (!g_appState.glContext) return -1;
