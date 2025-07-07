@@ -53,7 +53,6 @@ static uint8_t* readFileToBuffer(const char* path, size_t* size) {
 	return buffer;
 }
 
-
 unsigned char* loadImage_WebP(const char* path, int* width, int* height) {
 	size_t data_size = 0;
 	uint8_t* file_data = readFileToBuffer(path, &data_size);
