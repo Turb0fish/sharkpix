@@ -36,7 +36,7 @@ Format | Status
 PNG | ✅
 JPEG | ✅
 WebP | ✅
-FMSHA RUSHA HEIC| ✅
+AVIF HEIF HEIC| ✅
 TIFF TIF| ✅
 JPEG XL | ✅
 BMP | ✅
