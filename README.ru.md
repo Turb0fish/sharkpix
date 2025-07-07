@@ -36,7 +36,7 @@
 PNG  | ✅
 JPEG | ✅
 WebP | ✅
-ФМША РУША HEIC| ✅
+AVIF HEIF HEIC| ✅
 TIFF TIF| ✅
 JPEG XL | ✅
 BMP | ✅
