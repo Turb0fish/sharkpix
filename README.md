@@ -29,7 +29,7 @@ Run in any directory with images
 
 # 🖼️ Supported formats
 
-PNG and JPEG use libpng and libjpeg-turbo libraries
+PNG and JPEG use libspng and libjpeg-turbo libraries
 
 Format | Status
 ------------- | :------------:
