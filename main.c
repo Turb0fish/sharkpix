@@ -1,8 +1,4 @@
 #define _GNU_SOURCE
-#define MAX_PATH_DISPLAY 512
-#define STR(x) #x
-#define XSTR(x) STR(x)
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,12 +6,10 @@
 #include <stdint.h>
 #include <dirent.h>
 #include <sys/stat.h>
-#include <strings.h>
-#include <limits.h>
-#include <stdatomic.h>
 
 #include <stb/stb_image.h>
 #include <SDL3/SDL.h>
+#include <SDL3_image/SDL_image.h>
 
 #include "modules/glad.h"
 #include "modules/main_structs.h"
@@ -23,9 +17,6 @@
 #include "modules/render.h"
 
 AppState g_appState;
-
-#define MIN(a, b) (((a) < (b)) ? (a) : (b))
-#define MAX(a, b) (((a) > (b)) ? (a) : (b))
 
 void ImageList_init(ImageList* list) {
 	list->items = NULL; list->size = 0; list->capacity = 0;
@@ -82,14 +73,6 @@ bool LoadResultQueue_dequeue(LoadResultQueue* queue, LoadResult* result) {
 	return true;
 }
 
-void ImageMetadata_setFileSize(ImageMetadata* meta, uint64_t bytes) {
-	meta->fileSizeKB = (uint32_t)(bytes / 1024);
-}
-
-float ImageMetadata_getFileSizeMB(const ImageMetadata* meta) {
-	return meta->fileSizeKB / 1024.0f;
-}
-
 int loader_thread_func(void* data);
 
 int compareImages(const void* a, const void* b) {
@@ -98,26 +81,20 @@ int compareImages(const void* a, const void* b) {
 	return strverscmp(metaA->path_utf8, metaB->path_utf8);
 }
 
-GLuint compileShader(GLenum type, const char* source) {
-	GLuint shader = glCreateShader(type);
-	glShaderSource(shader, 1, &source, NULL);
-	glCompileShader(shader);
-	GLint success;
-	glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
-	if (!success) {
-		char infoLog[512];
-		glGetShaderInfoLog(shader, 512, NULL, infoLog);
-		SDL_Log("Shader Compilation Failed:\n%s", infoLog);
-	}
-	return shader;
-}
+
 
 void unloadTexture(ImageMetadata* img) {
 	if (img->textureID != 0) {
-	glDeleteTextures(1, &img->textureID);
-	img->textureID = 0;
+		glDeleteTextures(1, &img->textureID);
+		img->textureID = 0;
 	}
-	if (img->state == IMAGE_STATE_LOADED) img->state = IMAGE_STATE_UNLOADED;
+	if (img->gif_animation) {
+		IMG_FreeAnimation(img->gif_animation);
+		img->gif_animation = NULL;
+	}
+	if (img->state == IMAGE_STATE_LOADED) {
+		img->state = IMAGE_STATE_UNLOADED;
+	}
 	img->full_width = 0;
 	img->full_height = 0;
 }
@@ -127,36 +104,6 @@ void unloadAllTexturesExcept(int exceptionIndex) {
 	if ((int)i == exceptionIndex) continue;
 		unloadTexture(&g_appState.images.items[i]);
 	}
-}
-
-void updateWindowTitle(void) {
-	if (g_appState.currentIndex < 0) {
-		SDL_SetWindowTitle(g_appState.window, "SharkPix");
-		return;
-	}
-	ImageMetadata* img = &g_appState.images.items[g_appState.currentIndex];
-	char title[1024];
-	switch(img->state) {
-		case IMAGE_STATE_LOADED:
-			snprintf(title, sizeof(title),
-				"[%d/%zu] %." XSTR(MAX_PATH_DISPLAY) "s | %dx%d | %.2f MB",
-				g_appState.currentIndex + 1, g_appState.images.size,
-				img->path_utf8, img->full_width, img->full_height,
-				ImageMetadata_getFileSizeMB(img));
-			break;
-		case IMAGE_STATE_LOADING:
-			snprintf(title, sizeof(title),
-				"[%d/%zu] %." XSTR(MAX_PATH_DISPLAY) "s | Loading...",
-				g_appState.currentIndex + 1, g_appState.images.size,
-				img->path_utf8);
-			break;
-		default:
-			snprintf(title, sizeof(title),
-				"[%d/%zu] %." XSTR(MAX_PATH_DISPLAY) "s | Failed or Unloaded",
-				g_appState.currentIndex + 1, g_appState.images.size,
-				img->path_utf8);
-	}
-	SDL_SetWindowTitle(g_appState.window, title);
 }
 
 void loader_start() {
@@ -178,13 +125,6 @@ void loader_stop() {
 		SDL_DestroyCondition(g_appState.loader_cv);
 		LoadResultQueue_free(&g_appState.loader_results);
 	}
-}
-
-void loader_request_load(int index) {
-	SDL_LockMutex(g_appState.loader_mutex);
-	atomic_store(&g_appState.loader_nextImageToLoad, index);
-	SDL_SignalCondition(g_appState.loader_cv);
-	SDL_UnlockMutex(g_appState.loader_mutex);
 }
 
 typedef unsigned char* (*ImageLoader)(const char*, int*, int*);
@@ -209,12 +149,51 @@ int loader_thread_func(void* data) {
 		int indexToLoad = atomic_exchange(&g_appState.loader_nextImageToLoad, -1);
 		SDL_UnlockMutex(g_appState.loader_mutex);
 		if (indexToLoad == -1) continue;
+
 		ImageMetadata* meta = &g_appState.images.items[indexToLoad];
+		LoadResult result = {0};
+		
 		struct stat fileStat;
 		if (stat(meta->path_utf8, &fileStat) == 0) {
 			ImageMetadata_setFileSize(meta, fileStat.st_size);
 		}
+
 		const char* ext = strrchr(meta->path_utf8, '.');
+		if (ext && strcasecmp(ext, ".gif") == 0) {
+			meta->gif_animation = IMG_LoadAnimation(meta->path_utf8);
+			if (meta->gif_animation) {
+				for (int i = 0; i < meta->gif_animation->count; i++) {
+					SDL_Surface* originalFrame = meta->gif_animation->frames[i];
+					SDL_Surface* convertedFrame = SDL_ConvertSurface(originalFrame, SDL_PIXELFORMAT_ABGR8888);
+					if (convertedFrame) {
+						SDL_DestroySurface(originalFrame);
+						meta->gif_animation->frames[i] = convertedFrame;
+					}
+				}
+				
+				meta->gif_current_frame = 0;
+				meta->gif_next_frame_time = SDL_GetTicks() + meta->gif_animation->delays[0];
+				result.width = meta->gif_animation->w;
+				result.height = meta->gif_animation->h;
+				SDL_Surface* firstFrame = meta->gif_animation->frames[0];
+				size_t dataSize = firstFrame->w * firstFrame->h * 4; // RGBA
+				result.data = (unsigned char*)malloc(dataSize);
+				if (result.data) {
+					SDL_LockSurface(firstFrame);
+					memcpy(result.data, firstFrame->pixels, dataSize);
+					SDL_UnlockSurface(firstFrame);
+					result.success = true;
+				} else {
+					IMG_FreeAnimation(meta->gif_animation);
+					meta->gif_animation = NULL;
+					result.success = false;
+				}
+				
+				result.index = indexToLoad;
+				LoadResultQueue_enqueue(&g_appState.loader_results, result);
+				continue;
+			}
+		}
 		ImageLoader loader = stbi_load_simple;
 		if (ext) {
 			static const struct {
@@ -239,9 +218,10 @@ int loader_thread_func(void* data) {
 				}
 			}
 		}
+
 		int width = 0, height = 0;
 		unsigned char* img_data = loader(meta->path_utf8, &width, &height);
-		LoadResult result = {
+		result = (LoadResult){
 			.index = indexToLoad,
 			.data = img_data,
 			.width = width,
@@ -253,28 +233,16 @@ int loader_thread_func(void* data) {
 	return 0;
 }
 
-void setCurrentImage(int newIndex) {
-	if (g_appState.images.size == 0) return;
-	if (newIndex >= (int)g_appState.images.size) newIndex = 0;
-	else if (newIndex < 0) newIndex = (int)g_appState.images.size - 1;
-	if (g_appState.currentIndex == newIndex) return;
-	g_appState.currentIndex = newIndex;
-	ImageMetadata* img = &g_appState.images.items[newIndex];
-	if (img->state != IMAGE_STATE_LOADED) {
-		img->state = IMAGE_STATE_LOADING;
-		loader_request_load(newIndex);
-	}
-	updateWindowTitle();
-}
-
 void processLoaderResults() {
 	LoadResult result;
 	while(LoadResultQueue_dequeue(&g_appState.loader_results, &result)) {
 		ImageMetadata* img = &g_appState.images.items[result.index];
 		if (result.index != g_appState.currentIndex) {
-			if (result.success) free(result.data);
+			if (result.success && result.data) {
+				free(result.data);
+			}
 			if (img->state == IMAGE_STATE_LOADING) img->state = IMAGE_STATE_UNLOADED;
-		continue;
+			continue;
 		}
 		if (result.success) {
 			img->full_width = result.width;
@@ -283,8 +251,15 @@ void processLoaderResults() {
 			glBindTexture(GL_TEXTURE_2D, img->textureID);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+			
+			if (img->gif_animation) {
+				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+			} else {
+				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+			}
+           
 			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, result.width, result.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, result.data);
 			glGenerateMipmap(GL_TEXTURE_2D);
 			free(result.data);
@@ -299,75 +274,6 @@ void processLoaderResults() {
 				g_appState.activeTextureIndex = -1;
 			}
 			updateWindowTitle();
-		}
-	}
-}
-
-//controls
-void handleEvents() {
-	SDL_Event event;
-	while (SDL_PollEvent(&event)) {
-		switch (event.type) {
-			case SDL_EVENT_QUIT:
-				atomic_store(&g_appState.loader_running, false);
-				break;
-			case SDL_EVENT_WINDOW_RESIZED:
-				SDL_GetWindowSize(g_appState.window, &g_appState.windowWidth, &g_appState.windowHeight);
-				glViewport(0, 0, g_appState.windowWidth, g_appState.windowHeight);
-				g_appState.projectionDirty = true;
-				if (g_appState.currentIndex != -1) resetView(true);
-				break;
-			case SDL_EVENT_KEY_DOWN:
-				switch (event.key.key) {
-					case SDLK_ESCAPE:
-						atomic_store(&g_appState.loader_running, false);
-						break;
-					case SDLK_RIGHT: case SDLK_KP_6:
-						setCurrentImage(g_appState.currentIndex + 1);
-						break;
-					case SDLK_LEFT: case SDLK_KP_4:
-						setCurrentImage(g_appState.currentIndex - 1);
-						break;
-					case SDLK_R:
-						if (g_appState.currentIndex != -1) resetView(true);
-						break;
-					case SDLK_F:
-						g_appState.isFullscreen = !g_appState.isFullscreen;
-						SDL_SetWindowFullscreen(g_appState.window, g_appState.isFullscreen);
-						break;
-				}
-					break;
-				//zoom
-				case SDL_EVENT_MOUSE_WHEEL: {
-				const bool* state = SDL_GetKeyboardState(NULL);
-				if (state[SDL_SCANCODE_LCTRL] || state[SDL_SCANCODE_RCTRL]) {
-					float mouseX, mouseY;
-					SDL_GetMouseState(&mouseX, &mouseY);
-					float oldZoom = g_appState.zoom;
-					float zoomFactor = (event.wheel.y > 0) ? 1.2f : (1.0f / 1.2f);
-					g_appState.zoom = (float)MAX(0.01, MIN(g_appState.zoom * zoomFactor, 100.0));
-					g_appState.offsetX = mouseX - (mouseX - g_appState.offsetX) * (g_appState.zoom / oldZoom);
-					g_appState.offsetY = mouseY - (mouseY - g_appState.offsetY) * (g_appState.zoom / oldZoom);
-					g_appState.modelDirty = true;
-					updateWindowTitle();
-				} else {
-					setCurrentImage(g_appState.currentIndex - (int)event.wheel.y);
-				}
-					break;
-			}
-			case SDL_EVENT_MOUSE_BUTTON_DOWN:
-				if (event.button.button == SDL_BUTTON_LEFT) g_appState.isDragging = true;
-				break;
-			case SDL_EVENT_MOUSE_BUTTON_UP:
-				if (event.button.button == SDL_BUTTON_LEFT) g_appState.isDragging = false;
-				break;
-			case SDL_EVENT_MOUSE_MOTION:
-				if (g_appState.isDragging) {
-					g_appState.offsetX += event.motion.xrel;
-					g_appState.offsetY += event.motion.yrel;
-					g_appState.modelDirty = true;
-			}
-		break;
 		}
 	}
 }
@@ -445,13 +351,10 @@ int main(int argc, char* argv[]) {
 	g_appState.glContext = SDL_GL_CreateContext(g_appState.window);
 	if (!g_appState.glContext) return -1;
 	SDL_GL_SetSwapInterval(1);
-
 	if (!gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress)) return -1;
-
 	glClearColor(0.12f, 0.12f, 0.12f, 1.0f);
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
 	GLuint vs = compileShader(GL_VERTEX_SHADER, vertexShaderSource);
 	GLuint fs = compileShader(GL_FRAGMENT_SHADER, fragmentShaderSource);
 	g_appState.shaderProgram = glCreateProgram();
@@ -460,12 +363,10 @@ int main(int argc, char* argv[]) {
 	glLinkProgram(g_appState.shaderProgram);
 	glDeleteShader(vs);
 	glDeleteShader(fs);
-
 	g_appState.modelLoc = glGetUniformLocation(g_appState.shaderProgram, "model");
 	g_appState.projLoc = glGetUniformLocation(g_appState.shaderProgram, "projection");
 	glUseProgram(g_appState.shaderProgram);
 	glUniform1i(glGetUniformLocation(g_appState.shaderProgram, "ourTexture"), 0);
-
 	float vertices[] = {
 		1.0f, 0.0f, 1.0f, 0.0f,
 		0.0f, 0.0f, 0.0f, 0.0f,
@@ -491,16 +392,22 @@ int main(int argc, char* argv[]) {
 	if (g_appState.images.size > 0) setCurrentImage(0);
 	updateProjectionMatrix();
 	glUniformMatrix4fv(g_appState.projLoc, 1, GL_FALSE, g_appState.projectionMatrix);
-
 	while (atomic_load(&g_appState.loader_running)) {
 		handleEvents();
 		processLoaderResults();
 		renderFrame();
 		SDL_GL_SwapWindow(g_appState.window);
 	}
-
 	loader_stop();
-	unloadAllTexturesExcept(-1);
+	
+	for (size_t i = 0; i < g_appState.images.size; ++i) {
+		if (g_appState.images.items[i].textureID != 0) {
+			glDeleteTextures(1, &g_appState.images.items[i].textureID);
+		}
+		if (g_appState.images.items[i].gif_animation) {
+			IMG_FreeAnimation(g_appState.images.items[i].gif_animation);
+		}
+	}
 	ImageList_free(&g_appState.images);
 	glDeleteVertexArrays(1, &g_appState.vao);
 	glDeleteBuffers(1, &g_appState.vbo);
