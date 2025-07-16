@@ -177,6 +177,7 @@ void handleEvents() {
 				SDL_GetWindowSize(g_appState.window, &g_appState.windowWidth, &g_appState.windowHeight);
 				glViewport(0, 0, g_appState.windowWidth, g_appState.windowHeight);
 				g_appState.projectionDirty = true;
+				SDL_GL_SwapWindow(g_appState.window); //FIX
 				if (g_appState.currentIndex != -1) resetView(true);
 				break;
 			case SDL_EVENT_KEY_DOWN:
